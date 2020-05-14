@@ -1,11 +1,11 @@
-;;; osa.el --- Open Scripting Architecture bridge -*- lexical-binding: t; -*-
+;;; osa.el --- OSA (JavaScript / AppleScript) bridge -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2020 xristos@sdf.org
 ;; All rights reserved
 
 ;; Version: 1.0 - 2020-04-29
 ;; Author: xristos <xristos@sdf.org>
-;; URL:
+;; URL: https://github.com/atomontage/osa
 ;; Package-Requires: ((emacs "25"))
 ;; Keywords: extensions
 
@@ -35,8 +35,9 @@
 
 ;;; Commentary:
 ;;
-;; This is an Emacs Lisp to Open Scripting Architecture bridge, working on
-;; top of Apple Event descriptors as provided by Emacs Mac port.
+;; This is an Emacs Lisp to macOS Open Scripting Architecture
+;; (JavaScript / AppleScript) bridge, working on top of Apple Event descriptors
+;; as provided by Emacs Mac port.
 ;;
 ;; Please see README.org for documentation.
 ;;
@@ -57,12 +58,12 @@
 (require 'cl-generic)
 
 (defvar osa-debug t
-  "If T, log unpacking errors to *Messages*.")
+  "If non-nil, log unpacking errors to *Messages*.")
 
 (defvar osa-strict-unpacking nil
-  "If T, signal errors when an Apple Event descriptor can not be unpacked.
+  "If non-nil, signal errors if an Apple Event descriptor can not be unpacked.
 Otherwise, unpacking returns descriptor data as-is, in a cons of form
-(:aedesc . data).")
+\(:aedesc . data).")
 
 (cl-defgeneric osa--pack (object)
   "Pack an Emacs Lisp object for use with `mac-osa-script'.
@@ -70,11 +71,11 @@ Otherwise, unpacking returns descriptor data as-is, in a cons of form
 The object is packed into a Lisp representation of an Apple Event descriptor.
 The following Emacs Lisp objects are supported:
 
-+ T and NIL
++ t and nil
 + Integer (must be within signed 32bit range or error is signaled)
 + String (encoded as UTF-16LE)
 + Tagged alist (:reco (k . v) ..)
-+ Vector
++ Vector and tagged list (:list ..)
 + :null
 + (:type :null), (:type :msng), (:type data)
 
@@ -86,9 +87,9 @@ Emacs Lisp object. TYPE must be a keyword symbol.
 
 The following Apple Event descriptor types are supported:
 
-+ True is unpacked to T
-+ False is unpacked to NIL
-+ Boolean type is unpacked to T or NIL
++ True is unpacked to t
++ False is unpacked to nil
++ Boolean type is unpacked to t or nil
 + Long is unpacked from signed 32bit to Emacs Lisp integer
 + Null which is distinct from null type, is unpacked to keyword :null
 + Type is unpacked to either (:type :null), (:type :msng), (:type data)
@@ -122,7 +123,14 @@ Use `osa-unpack' rather than directly calling `osa--unpack'.")
    with ret
    for elem across object do
    (push (osa--pack elem) ret)
-   finally return (nconc (list "list") (nreverse ret))))
+   finally return (cons "list" (nreverse ret))))
+
+(cl-defmethod osa--pack ((object (head :list)))
+  (cl-loop
+   with ret
+   for elem in (cdr object) do
+   (push (osa--pack elem) ret)
+   finally return (cons "list" (nreverse ret))))
 
 (cl-defmethod osa--pack ((object (head :reco)))
   (cl-loop
@@ -135,7 +143,6 @@ Use `osa-unpack' rather than directly calling `osa--unpack'.")
                                (nreverse ret)))))
 
 (cl-defmethod osa--pack ((object (head :type)))
-  ;; TODO: Move to a dispatch table
   (pcase (cl-second object)
     (:msng (cons "type" "gnsm"))
     (:null (cons "type" "llun"))
@@ -145,8 +152,9 @@ Use `osa-unpack' rather than directly calling `osa--unpack'.")
 (cl-defmethod osa--pack ((_object (eql :null)))
   (cons "null" nil))
 
+;;;###autoload
 (defun osa-pack (object)
-  "Pack Emacs Lisp object into an Apple Event Lisp representation.
+  "Pack Emacs Lisp OBJECT into an Apple Event Lisp representation.
 Return cons of form (type . data) on success.
 Errors are signaled otherwise.
 
@@ -180,7 +188,6 @@ Packing is implemented in the generic function `osa--pack'."
 
 (cl-defmethod osa--unpack ((_type (eql :type)) (v string))
   (cl-assert (> (length v) 0) t)        ; is it always == 4?
-  ;; TODO: Move to a dispatch table
   (pcase v
     ("gnsm" (list :type :msng))
     ("llun" (list :type :null))
@@ -216,7 +223,7 @@ Packing is implemented in the generic function `osa--pack'."
                                 ret)))
              (push (cons tag (osa--unpack (car rest) (cdr rest)))
                    ret))
-           finally return (nconc (list :reco) (nreverse ret))))
+           finally return (cons :reco (nreverse ret))))
 
 (cl-defmethod osa--unpack
     :before ((_type symbol) (v string))
@@ -227,29 +234,32 @@ Packing is implemented in the generic function `osa--pack'."
   (let ((key (intern-soft (format ":%s" type))))
     (osa--unpack key v)))
 
+;;;###autoload
 (defun osa-unpack (aedesc)
   "Unpack Emacs Lisp representation of Apple Event descriptor.
 Return Emacs Lisp object on successful parsing or descriptor
 data / signal error depending on `osa-strict-unpacking'.
 
 AEDESC must be a cons of form (type . data) as returned from
-`mac-osa-script' when passed VALUE-FORM as T.
+`mac-osa-script' when passed VALUE-FORM as t.
 Unpacking is implemented in the generic function `osa--unpack'.
 
-If `osa-strict-unpacking' is T, errors are signaled on all
-unpacking failures. Otherwise (default), original descriptor
-data is returned as-is in a cons of form (:aedesc . data)."
-  (condition-case-unless-debug err
-      (osa--unpack (car aedesc) (cdr aedesc))
-    ('error
-     (let ((err-msg (format "%s when unpacking %s"
-                            (error-message-string err)
-                            (prin1-to-string aedesc))))
-       (if osa-strict-unpacking
-           (error "%s" err-msg)
-         (when osa-debug
-           (message "osa-unpack: %s" err-msg) (message nil))
-         (cons :aedesc aedesc))))))
+If `osa-strict-unpacking' is non-nil, errors are signaled on all
+unpacking failures. Otherwise original descriptor data is
+returned as-is in a cons of form (:aedesc . data)."
+  (cl-flet ((format-error (err) (format "%s when unpacking %s"
+                                        (error-message-string err)
+                                        (prin1-to-string aedesc)))
+            (unpack () (osa--unpack (car aedesc) (cdr aedesc))))
+    (if osa-strict-unpacking
+        (condition-case-unless-debug err (unpack)
+          ('error (error "%s" (format-error err))))
+      (condition-case err (unpack)
+        ('error (when osa-debug
+                  (let ((message-truncate-lines t))
+                    (message "osa-unpack: %s" (format-error err))
+                    (message nil)))
+                (cons :aedesc aedesc))))))
 
 
 ;;;
@@ -257,18 +267,21 @@ data is returned as-is in a cons of form (:aedesc . data)."
 ;;;
 
 
+;;;###autoload
 (cl-defun osa-eval (src &key (unpack t) (lang "AppleScript")
                         call args &allow-other-keys)
-  "Evaluate SRC through OSA, which must be AppleScript or JavaScript
-source code and return its result.
+  "Evaluate SRC through OSA and return the result.
 
-If UNPACK is T (default), result is unpacked into Emacs Lisp objects
+SRC must be AppleScript or JavaScript source code.
+
+If UNPACK is non-nil, result is unpacked into Emacs Lisp objects
 through `osa-unpack'. Otherwise, unmodified Lisp representation of
 Apple Event descriptor as generated by `mac-osa-script' is returned.
 
-If CALL is given, it must be a string with the name of a handler/function
-in SRC to be called with arguments in ARGS list. All arguments in ARGS
-must be Emacs Lisp objects that `osa-pack' can pack.
+If CALL is present, it must be the name of a handler/function in SRC
+to be called with arguments in ARGS list.
+
+All arguments in ARGS must be Emacs Lisp objects that `osa-pack' can pack.
 
 Errors are signaled if evaluation fails."
   (when call (cl-assert (stringp call) t))
@@ -279,20 +292,20 @@ Errors are signaled if evaluation fails."
     (let ((res (apply #'mac-osa-script src lang nil t call args)))
       (if unpack (osa-unpack res) res))))
 
-
+;;;###autoload
 (cl-defun osa-eval-file (path &rest rest &key (lang "AppleScript")
                               include debug &allow-other-keys)
-  "Read contents of PATH, which must be a file containing AppleScript or
-JavaScript source code, evaluate by calling `osa-eval' and return its
-results.
+  "Evaluate contents of PATH through `osa-eval' and return the result.
 
-If INCLUDE is given, it must be a path to a file or a list of paths.
+PATH must be a file containing AppleScript or JavaScript source code.
+
+If INCLUDE is present, it must be a path to a file or a list of paths.
 All files specified through INCLUDE are read and their contents prepended,
 in the order given, to the contents of PATH, forming one final source string
 that is passed to `osa-eval'. INCLUDE is meant to be used with reusable
 code that was factored out into library files.
 
-If DEBUG is T, a new buffer is generated and the final source string
+If DEBUG is non-nil, a new buffer is created and the final source string
 inserted there, for later reference/review, before `osa-eval' is called.
 
 See `osa-eval' for extra keyword arguments that are passed through as-is.
@@ -303,17 +316,16 @@ Errors are signaled if evaluation fails."
                          (insert (format "Sourced from: %s\n" p))
                          (insert-file-contents p)
                          (string-trim-right (buffer-string)))))
-    (let* ((src (mapconcat #'slurp
-                           (append (if (not (listp include))
-                                       (list include)
-                                     include)
-                                   (list path))
-                           "\n\n")))
+    (let ((src (mapconcat #'slurp
+                          (append (if (not (listp include))
+                                      (list include)
+                                    include)
+                                  (list path))
+                          "\n\n")))
       (when debug
-        (with-current-buffer (generate-new-buffer "*osa-debug*")
+        (with-current-buffer (generate-new-buffer "*osa-eval-file*")
           (insert src)
           (goto-char (point-min))
-          (when (string= lang "JavaScript") (js2-mode))
           (message "osa-eval: %d characters written to buffer %s"
                    (buffer-size) (buffer-name))))
       (apply #'osa-eval src rest))))

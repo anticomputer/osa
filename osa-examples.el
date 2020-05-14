@@ -34,13 +34,15 @@
 ;;; Code:
 
 (require 'osa)
+(require 'subr-x)
+(require 'cl-lib)
 
 (defvar osa-examples-script-directory
   (and load-file-name
        (concat (file-name-directory load-file-name)
                (file-name-as-directory "scripts")))
-  "Directory to look for example scripts.
-You can set this manually if auto-detection fails.")
+  "Directory that contains example scripts.
+Set this manually if auto-detection fails.")
 
 (defun osa-examples-plist-to-record (plist)
   (cl-loop for (k v) on plist by #'cddr
@@ -54,21 +56,21 @@ You can set this manually if auto-detection fails.")
     (error "Script directory is unset (osa-examples-script-directory)"))
   (concat osa-examples-script-directory script-file))
 
+;;;###autoload
 (cl-defun osa-examples/notify (msg &rest rest &key title subtitle sound)
   "Display a macOS notification.
 
 MSG is required, all other arguments are optional.
-SOUND if given should be the base name of a file present in:
+SOUND should be the base name of a file present in:
 
-/System/Library/Sounds/
-/Library/Sounds/
-/Users/<user>/Library/Sounds/"
+/System/Library/Sounds/"
   ;; Example: (osa-examples/notify "This is only a test!" :sound "Ping")
   (osa-eval-file (osa-examples--find "notify.js")
                  :lang "JavaScript"
                  :call "notify"
                  :args (list msg (osa-examples-plist-to-record rest))))
 
+;;;###autoload
 (defun osa-examples/finder (path)
   "Reveal PATH in a new Finder window.
 Return PATH."
@@ -76,6 +78,7 @@ Return PATH."
     (osa-eval-file (osa-examples--find "show-finder.applescript")
                    :call "show_finder" :args (list path))))
 
+;;;###autoload
 (defun osa-examples/terminal (path)
   "Open a new Terminal.app window and cd to PATH.
 
